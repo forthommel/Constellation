@@ -1,0 +1,75 @@
+/**
+ * @file
+ * @brief Implementation of the CAEN FERS prototype satellite
+ *
+ * @copyright Copyright (c) 2024 DESY and the Constellation authors.
+ * This software is distributed under the terms of the EUPL-1.2 License, copied verbatim in the file "LICENSE.md".
+ * SPDX-License-Identifier: EUPL-1.2
+ */
+
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <stop_token>
+#include <string_view>
+#include <thread>
+
+#include <FERSlib.h>
+
+#include "constellation/core/config/Configuration.hpp"
+#include "constellation/core/log/log.hpp"
+#include "constellation/core/metrics/Metric.hpp"
+#include "constellation/core/metrics/stat.hpp"
+#include "constellation/core/protocol/CSCP_definitions.hpp"
+#include "constellation/satellite/Satellite.hpp"
+
+#include "CaenFersSatellite.hpp"
+
+using namespace constellation::config;
+using namespace constellation::metrics;
+using namespace constellation::protocol::CSCP;
+using namespace constellation::satellite;
+using namespace std::chrono_literals;
+
+CaenFersSatellite::CaenFersSatellite(std::string_view type, std::string_view name) : Satellite(type, name) {
+    LOG(STATUS) << "CAEN FERS prototype satellite " << getCanonicalName() << " created";
+
+    register_command("get_channel_reading",
+                     "This example command reads the a device value from the channel number provided as argument. Since this"
+                     "will reset the corresponding channel, this can only be done before the run has started.",
+                     {State::NEW, State::INIT, State::ORBIT},
+                     std::function<double(int)>([&](int channel) -> double { return 13.8 * channel; }));
+}
+
+void CaenFersSatellite::initializing(Configuration& config) {
+    // Obtain the beeping interval from the configuration:
+    auto interval = config.get<std::uint64_t>("interval", 3000U);
+
+    register_timed_metric(
+        "BEEP", "beeps", MetricType::LAST_VALUE, "CAEN FERS beeps", std::chrono::milliseconds(interval), []() {
+            return 42;
+        });
+
+    register_metric("TIME", "s", MetricType::LAST_VALUE, "CAEN FERS total time since launch");
+    register_metric("TEMPERATURE", "degC", MetricType::LAST_VALUE, "Measured temperature inside satellite");
+    register_metric("FAN_RUNNING", "", MetricType::LAST_VALUE, "Information on the fan state");
+}
+
+void CaenFersSatellite::launching() {
+    launch_time_ = std::chrono::system_clock::now();
+}
+
+void CaenFersSatellite::running(const std::stop_token& stop_token) {
+    while(!stop_token.stop_requested()) {
+        const auto time = static_cast<double>((std::chrono::system_clock::now() - launch_time_).count()) * 1e-9;
+        // Let's calculate some temperature in space which depends on time (absorption from sun)
+        const auto temperature = (std::sin(time / 50.) * 70.) + 20.;
+
+        STAT_T("TEMPERATURE", temperature, 3s);
+        // Fan turns on above 36degC
+        STAT_T("FAN_RUNNING", temperature > 36., 5s);
+        STAT_T("TIME", time, 10s);
+        std::this_thread::sleep_for(50ms);
+    }
+}
