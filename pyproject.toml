@@ -48,6 +48,7 @@ SatelliteKeithley = "constellation.satellites.Keithley.__main__:main"
 SatelliteLakeShore218 = "constellation.satellites.LakeShore218.__main__:main"
 SatelliteLeCroy = "constellation.satellites.LeCroy.__main__:main"
 SatelliteMariner = "constellation.satellites.Mariner.__main__:main"
+SatelliteSampic = "constellation.satellites.Sampic.__main__:main"
 
 [project.urls]
 Homepage = "https://constellation.pages.desy.de/"
@@ -91,6 +92,7 @@ hdf5 = ["h5py"]
 influx = ["influxdb-client"]
 keithley = ["pyserial"]
 lecroy = ["lecrunch3>=3.0.3", "numpy"]
+sampic = ["SampicTCPController>=0.1.0", "numpy"]
 visa = ["pyvisa", "pyvisa-py", "pyserial", "zeroconf"]
 
 [tool.meson-python.args]
