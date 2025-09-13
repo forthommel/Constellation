@@ -28,6 +28,7 @@ class LeCroySatellite(TransmitterSatellite):
     _sequence_mode: bool = False
     _num_sequences: int = 1
     _num_triggers_acquired: int = 0
+    _disable_channels_readout: bool = False
 
     def do_initializing(self, configuration: Configuration) -> str:
         self.log.info("Received configuration with parameters: %s", ", ".join(configuration.get_keys()))
@@ -42,7 +43,8 @@ class LeCroySatellite(TransmitterSatellite):
         except ConnectionRefusedError as e:
             raise RuntimeError(f"Connection refused to {ip_address}:{port}") from e
 
-        self._configure_sequences(num_sequences)
+        self._configure_sequences(configuration.get("nsequences", 1))
+        self._disable_channels_readout = configuration.get("disable_channels_readout", False)
 
         # channels trigger levels and offsets are not expected to change on reconfiguration
         self._channels = self._scope.get_channels()
@@ -73,24 +75,22 @@ class LeCroySatellite(TransmitterSatellite):
         while not self.stop_requested():
             try:
                 self._scope.trigger()
-                first_channel = True
-                event_payload = np.array([])
-                for channel in self._channels:
-                    wave_desc, trg_times, trg_offsets, wave_array = self._scope.get_waveform_all(channel)
-                    if first_channel:
-                        event_payload = trg_times
-                        num_samples = wave_desc["wave_array_count"] // self._num_sequences
-                        event_payload = np.append(event_payload, num_samples)
-                        first_channel = False
-                    wave_array = (
-                        wave_array * wave_desc["vertical_gain"] - wave_desc["vertical_offset"]
-                    )  # already transform to V
-                    event_payload = np.append(event_payload, trg_offsets)
-                    event_payload = np.append(event_payload, wave_array)
-                data_record = self.new_data_record({"dtype": f"{event_payload.dtype}"})
-                data_record.add_block(event_payload.tobytes())
-                self.send_data_record(data_record)
-            except TimeoutError:
+                if not self._disable_channels_readout:
+                    first_channel = True
+                    for channel in self._channels:
+                        wave_desc, trg_times, trg_offsets, wave_array = self._scope.get_waveform_all(channel)
+                        if first_channel:
+                            event_payload = trg_times
+                            num_samples = wave_desc["wave_array_count"] // self._num_sequences
+                            event_payload = np.append(event_payload, num_samples)
+                            first_channel = False
+                        wave_array = (
+                            wave_array * wave_desc["vertical_gain"] - wave_desc["vertical_offset"]
+                        )  # already transform to V
+                        event_payload = np.append(event_payload, trg_offsets)
+                        event_payload = np.append(event_payload, wave_array)
+                    self.data_queue.put((event_payload.tobytes(), {"dtype": f"{event_payload.dtype}"}))
+            except socket.timeout:
                 self.log.warning("Timeout encountered while retrieving the sequence.")
                 continue
             except (OSError, struct.error) as e:

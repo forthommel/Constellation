@@ -7,21 +7,21 @@ Provides the satellite implementation for the Sampic TCP control interface
 
 import datetime
 import socket
+import time
 from typing import Any
 
 from constellation.core.cmdp import MetricsType
 from constellation.core.commandmanager import cscp_requestable
 from constellation.core.configuration import Configuration
-from constellation.core.datasender import DataSender
 from constellation.core.message.cscp1 import CSCP1Message, SatelliteState
 from constellation.core.monitoring import schedule_metric
+from constellation.core.satellite import Satellite
 from SampicTCPController import SampicTCPController
 
 
-class SampicTCPSatellite(DataSender):
+class SampicTCPSatellite(Satellite):
     _sampic = None
     _sequence_mode: bool = False
-    _extract_stream: bool = False
     _num_triggers_acquired: int = 0
     _run_name: str = ""
     _base_filename: str = ""
@@ -32,18 +32,14 @@ class SampicTCPSatellite(DataSender):
         ip_address = configuration["ip_address"]
         port = configuration["port"]
         timeout = configuration.setdefault("timeout", 5.0)
-        self._extract_stream = configuration.setdefault("extract_stream", False)
         self._run_name = configuration.setdefault("run_name", "run")
         self._base_filename = configuration.setdefault("base_filename", "sampic_run")
 
         try:
             self._sampic = SampicTCPController(str(ip_address), port=int(port), timeout=float(timeout))
-            self._sampic.dataTransmitToTCPClient(self._extract_stream)
+            self._sampic.dataTransmitToTCPClient(False)
         except ConnectionRefusedError as e:
             raise RuntimeError(f"Connection refused to {ip_address}:{port} -> {str(e)}")
-
-        self.BOR["fw_version"] = self._sampic.fwVersion()
-        self.BOR["sw_version"] = self._sampic.swVersion()
 
         return f"Connected to Sampic at {ip_address}"
 
@@ -53,30 +49,18 @@ class SampicTCPSatellite(DataSender):
         self._sampic.stop()
         return "Successfully reconfigured Sampic"
 
-    def do_run(self, payload: Any) -> str:
+    def do_run(self, run_identifier: str) -> str:
         self._num_triggers_acquired = 0
         event_payload = bytearray()
-        self._sampic.start(self._run_name, baseFilename=self._base_filename)
+        self._sampic.start(self._run_name, baseFilename=f"{self._base_filename}_{run_identifier}")
         first_event_sent = False
         while not self._state_thread_evt.is_set():
-            if self._extract_stream:
-                try:
-                    self._sampic.read(event_payload, 1024)
-                    self.data_queue.put(event_payload)
-                    event_payload.clear()
-                except socket.timeout:
-                    self.log.warning("Timeout encountered while retrieving the frame.")
-                    continue
-                self._num_triggers_acquired += 1
-                self.log.info(f"Fetched event {self._num_triggers_acquired}")
-            elif not first_event_sent:
-                first_event_sent = False
+            time.sleep(0.1)
 
-        self.EOR["current_time"] = datetime.datetime.now().timestamp()
+        self._sampic.stop()
         return "Finished acquisition"
 
     def do_stopping(self) -> str:
-        self._sampic.stop()
         self.log.info(f"Stopping the run after {self._num_triggers_acquired} event(s)")
         return "Stopped acquisition"
 
