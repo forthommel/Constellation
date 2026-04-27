@@ -23,6 +23,7 @@ class SampicTCPSatellite(Satellite):
     _sampic = None
     _sequence_mode: bool = False
     _num_triggers_acquired: int = 0
+    _max_triggers: int = 0
     _run_name: str = ""
     _base_filename: str = ""
 
@@ -31,9 +32,10 @@ class SampicTCPSatellite(Satellite):
 
         ip_address = configuration["ip_address"]
         port = configuration["port"]
-        timeout = configuration.setdefault("timeout", 5.0)
+        timeout = configuration.setdefault("timeout", 5.0e9)
         self._run_name = configuration.setdefault("run_name", "run")
         self._base_filename = configuration.setdefault("base_filename", "sampic_run")
+        self._max_triggers = configuration.setdefault("max_triggers", 0)
 
         try:
             self._sampic = SampicTCPController(str(ip_address), port=int(port), timeout=float(timeout))
@@ -52,11 +54,13 @@ class SampicTCPSatellite(Satellite):
     def do_run(self, run_identifier: str) -> str:
         self._num_triggers_acquired = 0
         event_payload = bytearray()
-        self._sampic.start(self._run_name, baseFilename=f"{self._base_filename}_{run_identifier}")
-        first_event_sent = False
+        max_triggers = self._max_triggers if self._max_triggers > 0 else -1
+        self._sampic.start(self._base_filename, numTriggers = max_triggers, baseFilename=f"{self._run_name}_{run_identifier}")
         while not self._state_thread_evt.is_set():
+            if self._sampic.finished():
+                self._num_triggers_acquired = max_triggers
+                return "Finished acquisition"
             time.sleep(0.1)
-
         self._sampic.stop()
         return "Finished acquisition"
 
@@ -65,10 +69,10 @@ class SampicTCPSatellite(Satellite):
         return "Stopped acquisition"
 
     @cscp_requestable
-    def get_num_triggers(self, request: CSCP1Message) -> [str, int, dict[str, Any]]:
-        if self.fsm.current_state_value == SatelliteState.RUN:
-            return f"Number of triggers: {self._num_triggers_acquired}", self._num_triggers_acquired, {}
-        return "Not running", -1, {}
+    def get_num_triggers(self, request: CSCP1Message) -> tuple[str, Any, dict[str, Any]]:
+        #if self.fsm.current_state_value == SatelliteState.RUN:
+            #self._num_triggers_acquired = self._sampic.numEvents() #FIXME
+        return f"Number of triggers: {self._num_triggers_acquired}", self._num_triggers_acquired, {}
 
     @schedule_metric("", MetricsType.LAST_VALUE, 10)
     def NUM_TRIGGERS(self) -> int | None:

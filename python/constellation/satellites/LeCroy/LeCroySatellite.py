@@ -7,6 +7,7 @@ Constellation interface
 """
 
 import datetime
+import socket
 import struct
 from typing import Any
 
@@ -26,6 +27,7 @@ class LeCroySatellite(TransmitterSatellite):
     _settings: dict[str, bytes]
     _channels: list[int] = []
     _sequence_mode: bool = False
+    _extra_settings: list[str] = []
     _num_sequences: int = 1
     _num_triggers_acquired: int = 0
     _disable_channels_readout: bool = False
@@ -37,6 +39,7 @@ class LeCroySatellite(TransmitterSatellite):
         port = configuration.get_int("port", 1861, min_val=0, max_val=65535)
         timeout = configuration.get_num("timeout", 5.0)
         num_sequences = configuration.get_int("nsequence", 1)
+        self._extra_settings = configuration.get_str("extra_settings", "").split(';')
 
         try:
             self._scope = LeCrunch3.LeCrunch3(str(ip_address), port=int(port), timeout=float(timeout))
@@ -89,7 +92,9 @@ class LeCroySatellite(TransmitterSatellite):
                         )  # already transform to V
                         event_payload = np.append(event_payload, trg_offsets)
                         event_payload = np.append(event_payload, wave_array)
-                    self.data_queue.put((event_payload.tobytes(), {"dtype": f"{event_payload.dtype}"}))
+                    data_record = self.new_data_record()
+                    data_record.add_block(event_payload.tobytes())
+                    self.send_data_record(data_record)
             except socket.timeout:
                 self.log.warning("Timeout encountered while retrieving the sequence.")
                 continue
@@ -122,6 +127,13 @@ class LeCroySatellite(TransmitterSatellite):
         self._sequence_mode = self._num_sequences > 0
         if self._sequence_mode:
             self._scope.set_sequence_mode(self._num_sequences)
+        if len(self._extra_settings) > 0:
+            extra_settings = {}
+            i = 0
+            for user_setting in self._extra_settings:
+                extra_settings[f"extra_setting_{i}"] = user_setting
+                i += 1
+            self._scope.set_settings(extra_settings)
         self._settings = self._scope.get_settings()
         self.log.debug(f"Scope settings: {self._settings}")
         if b"ON" in self._settings["SEQUENCE"]:  # waveforms sequencing enabled
