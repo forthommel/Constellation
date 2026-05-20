@@ -10,11 +10,11 @@ import socket
 import time
 from typing import Any
 
-from constellation.core.cmdp import MetricsType
 from constellation.core.commandmanager import cscp_requestable
 from constellation.core.configuration import Configuration
-from constellation.core.message.cscp1 import CSCP1Message, SatelliteState
+from constellation.core.message.cscp1 import CSCP1Message
 from constellation.core.monitoring import schedule_metric
+from constellation.core.protocol.cscp1 import SatelliteState
 from constellation.core.satellite import Satellite
 from SampicTCPController import SampicTCPController
 
@@ -28,17 +28,17 @@ class SampicTCPSatellite(Satellite):
     _base_filename: str = ""
 
     def do_initializing(self, configuration: Configuration) -> str:
-        self.log.info("Received configuration with parameters: %s", ", ".join(configuration.get_keys()))
+        self.log.info("Received configuration with parameters:\n%s", ",\n".join(configuration.get_keys()))
 
-        ip_address = configuration["ip_address"]
-        port = configuration["port"]
-        timeout = configuration.setdefault("timeout", 5.0e9)
-        self._run_name = configuration.setdefault("run_name", "run")
-        self._base_filename = configuration.setdefault("base_filename", "sampic_run")
-        self._max_triggers = configuration.setdefault("max_triggers", 0)
+        ip_address: str = configuration.get_str("ip_address")
+        port: int = configuration.get_int("port")
+        timeout: float = configuration.get_float("timeout", 5.0e9)
+        self._run_name = configuration.get_str("run_name", "run")
+        self._base_filename = configuration.get_str("base_filename", "sampic_run")
+        self._max_triggers = configuration.get_int("max_triggers", 0)
 
         try:
-            self._sampic = SampicTCPController(str(ip_address), port=int(port), timeout=float(timeout))
+            self._sampic = SampicTCPController(ip_address, port=port, timeout=timeout)
             self._sampic.dataTransmitToTCPClient(False)
         except ConnectionRefusedError as e:
             raise RuntimeError(f"Connection refused to {ip_address}:{port} -> {str(e)}")
@@ -51,12 +51,11 @@ class SampicTCPSatellite(Satellite):
         self._sampic.stop()
         return "Successfully reconfigured Sampic"
 
-    def do_run(self, run_identifier: str) -> str:
+    def do_run(self) -> str:
         self._num_triggers_acquired = 0
-        event_payload = bytearray()
-        max_triggers = self._max_triggers if self._max_triggers > 0 else -1
-        self._sampic.start(self._base_filename, numTriggers = max_triggers, baseFilename=f"{self._run_name}_{run_identifier}")
-        while not self._state_thread_evt.is_set():
+        max_triggers: int = self._max_triggers if self._max_triggers > 0 else -1
+        self._sampic.start(self._base_filename, numTriggers=max_triggers, baseFilename=f"{self._run_name}")
+        while not self.stop_requested():
             if self._sampic.finished():
                 self._num_triggers_acquired = max_triggers
                 return "Finished acquisition"
@@ -68,14 +67,10 @@ class SampicTCPSatellite(Satellite):
         self.log.info(f"Stopping the run after {self._num_triggers_acquired} event(s)")
         return "Stopped acquisition"
 
-    @cscp_requestable
+    @cscp_requestable([SatelliteState.RUN])
     def get_num_triggers(self, request: CSCP1Message) -> tuple[str, Any, dict[str, Any]]:
-        #if self.fsm.current_state_value == SatelliteState.RUN:
-            #self._num_triggers_acquired = self._sampic.numEvents() #FIXME
         return f"Number of triggers: {self._num_triggers_acquired}", self._num_triggers_acquired, {}
 
-    @schedule_metric("", MetricsType.LAST_VALUE, 10)
+    @schedule_metric("", 10, allowed_states=[SatelliteState.RUN])
     def NUM_TRIGGERS(self) -> int | None:
-        if self.fsm.current_state_value == SatelliteState.RUN:
-            return self._num_triggers_acquired
-        return None
+        return self._num_triggers_acquired

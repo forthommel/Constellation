@@ -39,7 +39,7 @@ class LeCroySatellite(TransmitterSatellite):
         port = configuration.get_int("port", 1861, min_val=0, max_val=65535)
         timeout = configuration.get_num("timeout", 5.0)
         num_sequences = configuration.get_int("nsequence", 1)
-        self._extra_settings = configuration.get_str("extra_settings", "").split(';')
+        self._extra_settings = configuration.get_str("extra_settings", "").split(";")
 
         try:
             self._scope = LeCrunch3.LeCrunch3(str(ip_address), port=int(port), timeout=float(timeout))
